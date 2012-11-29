@@ -1,0 +1,9 @@
+# Move this file to /etc/bash_completion.d/gdapi or include the contents in your ~/.bashrc
+# 
+# This assumes the gdapi.py file is renamed as "gdapi" and in your $PATH
+
+_gdapi()
+{
+      COMPREPLY=( $(gdapi _complete ${COMP_CWORD} "${COMP_WORDS[@]}") )
+}
+complete -F _gdapi gdapi
