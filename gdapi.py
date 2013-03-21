@@ -21,13 +21,25 @@ POST_METHOD = "POST"
 PUT_METHOD = "PUT"
 DELETE_METHOD = "DELETE"
 
+HEADERS = { "Accept" : "application/json" }
+
+def echo(fn):
+  def wrapped(*args, **kw):
+    ret = fn(*args, **kw)
+    print fn.__name__, repr(ret)
+    return ret
+  return wrapped
+  
 class RestObject:
+  def _is_public(self, k, v):
+    return k not in [ "links", "actions", "id", "type"] and not callable(v)
+
   def __str__(self):
     if not hasattr(self, "type"):
       return str(self.__dict__)
     data = [("Type", "Id", "Name", "Value")]
     for k, v in self.iteritems():
-      if k not in [ "links", "actions", "id", "type"] and not callable(v):
+      if self._is_public(k, v):
         if v is None:
           v = "null"
         if v is True:
@@ -39,7 +51,11 @@ class RestObject:
     return indent(data, hasHeader=True, prefix='| ', postfix=' |')
 
   def __repr__(self):
-    return repr(self.__dict__)
+    data = {}
+    for k, v in self.__dict__.iteritems():
+      if self._is_public(k, v):
+        data[k] = v
+    return repr(data)
 
   def __iter__(self):
     return iter(self.__dict__)
@@ -92,6 +108,10 @@ class Schema:
       except:
         pass
 
+      if not hasattr(t, "collectionFilters"):
+        t.collectionFilters = {}
+       
+
   def __str__(self):
     return str(self.text)
 
@@ -107,15 +127,19 @@ class ApiError(Exception):
     except:
       super(ApiError, self).__init__(self, "API Error")
 
+class ClientApiError(Exception):
+  pass
+
 
 class Client:
-  def __init__(self, accesskey=None, secretkey=None, url=None, cache=None, cachetime=86400):
+  def __init__(self, accesskey=None, secretkey=None, url=None, cache=None, cachetime=86400, strict=False):
     self._accesskey = accesskey
     self._secretkey = secretkey
     self._auth = ( self._accesskey, self._secretkey )
     self._url = url
     self._cache = cache
     self._cachetime = cachetime
+    self._strict = strict
     self.schema = None
 
     if not self._cachetime:
@@ -167,7 +191,7 @@ class Client:
 
   def _get_raw(self, url, data=None):
     #start = time.time()
-    r = requests.get(url, auth=self._auth, params=data)
+    r = requests.get(url, auth=self._auth, params=data, headers=HEADERS)
     #delta = time.time() - start
     #print delta, " seconds", url
     if r.status_code < 200 or r.status_code >= 300:
@@ -177,7 +201,7 @@ class Client:
   
   def _post(self, url, data=None):
     #start = time.time()
-    r = requests.post(url, auth=self._auth, data=self._marshall(data))
+    r = requests.post(url, auth=self._auth, data=self._marshall(data), headers=HEADERS)
     #delta = time.time() - start
     #print delta, " seconds", url
     if r.status_code < 200 or r.status_code >= 300:
@@ -187,7 +211,7 @@ class Client:
 
   def _put(self, url, data=None):
     #start = time.time()
-    r = requests.put(url, auth=self._auth, data=self._marshall(data))
+    r = requests.put(url, auth=self._auth, data=self._marshall(data), headers=HEADERS)
     #delta = time.time() - start
     #print delta, " seconds", url
     if r.status_code < 200 or r.status_code >= 300:
@@ -197,7 +221,7 @@ class Client:
 
   def _delete(self, url):
     #start = time.time()
-    r = requests.delete(url, auth=self._auth)
+    r = requests.delete(url, auth=self._auth, headers=HEADERS)
     #delta = time.time() - start
     #print delta, " seconds", url
     if r.status_code < 200 or r.status_code >= 300:
@@ -206,6 +230,7 @@ class Client:
     return self._unmarshall(r.text)
 
   def _unmarshall(self, text):
+    #print "Output:", text
     return json.loads(text, object_pairs_hook=self.object_pairs_hook)
 
   def _marshall(self, obj):
@@ -248,14 +273,38 @@ class Client:
   def update(self, obj, *args, **kw):
     url = obj.links.self
 
-    for k, v in self._to_dict(*args, **kw):
+    for k, v in self._to_dict(*args, **kw).iteritems():
       setattr(obj, k, v)
 
     return self._put(url, data=obj)
 
+  def _validate_list(self, type, **kw):
+    if not self._strict:
+      return
+
+    collectionFilters = self.schema.types[type].collectionFilters
+
+    for k in kw:
+      if hasattr(collectionFilters, k):
+        return
+
+      for filter_name, filter_value in collectionFilters.iteritems():
+        for m in filter_value.modifiers:
+          if k == "_".join([filter_name, m]):
+            return
+
+      raise ClientApiError(k + " is not searchable field")
+
   def list(self, type, **kw):
+    if not type in self.schema.types:
+      raise ClientApiError(k + " is not a valid type")
+
+    self._validate_list(type, **kw)
     collection_url = self.schema.types[type].links.collection
     return self._get(collection_url, data=kw)
+
+  def reload(self, obj):
+    return self.by_id(obj.type, obj.id)
 
   def create(self, type, *args, **kw):
     collection_url = self.schema.types[type].links.collection
@@ -266,8 +315,8 @@ class Client:
       if isinstance(i, RestObject):
         self._delete(i.links.self)
 
-  def action(self, obj, name, *args, **kw):
-    url = obj.actions[name]
+  def action(self, obj, action_name, *args, **kw):
+    url = obj.actions[action_name]
     return self._post(url, data=self._to_dict(*args,**kw))
 
   def _to_dict(self, *args, **kw):
@@ -300,7 +349,7 @@ class Client:
       for method_name, type_collection, test_method, m in bindings:
         # double lambda for lexical binding hack
         cb = lambda type_name=type_name, method=m: lambda *args,**kw: method(type_name, *args, **kw)
-        if test_method in type[type_collection]:
+        if hasattr(type, type_collection) and test_method in type[type_collection]:
           setattr(self, "_".join([method_name, type_name]), cb())
 
   def _get_schema_hash(self):
@@ -519,7 +568,7 @@ class Client:
       if self._is_list_type(type_name, k):
         new_args[k] = v
       else:
-        if len(v):
+        if len(v) and v[0] != "null":
           new_args[k] = v[0]
         else:
           new_args[k] = None
@@ -677,8 +726,7 @@ def _parse_client_options(cmd, words, index = None):
 
     if not added:
       env_suffix = long_key.replace("-","_").upper()
-      env_key = env_prefix + env_suffix
-      for env_key in [ env_prefix + env_suffix, "GDAPI_" + env_suffix ]:
+      for env_key in [ env_prefix + "_" + env_suffix, "GDAPI_" + env_suffix ]:
         if os.environ.has_key(env_key):
           parsed_opts[short_key] = os.environ[env_key]
           break
