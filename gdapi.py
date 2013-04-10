@@ -9,6 +9,14 @@ import time
 
 CACHE_DIR = "~/.gdapi"
 
+TIME = False
+try:
+  os.environ["TIME_API"]
+  TIME = True
+except:
+  pass
+
+
 LIST = "list-"
 CREATE = "create-"
 UPDATE = "update-"
@@ -30,6 +38,18 @@ def echo(fn):
     return ret
   return wrapped
   
+def timedurl(fn):
+  def wrapped(*args, **kw):
+    if TIME:
+      start = time.time()
+      ret = fn(*args, **kw)
+      delta = time.time() - start
+      print delta, args[1], fn.__name__
+      return ret
+    else:
+      return fn(*args, **kw)
+  return wrapped
+
 class RestObject:
   def _is_public(self, k, v):
     return k not in [ "links", "actions", "id", "type"] and not callable(v)
@@ -127,9 +147,27 @@ class ApiError(Exception):
     except:
       super(ApiError, self).__init__(self, "API Error")
 
+
 class ClientApiError(Exception):
   pass
 
+def from_env(prefix = "GDAPI_", url = None, accesskey = None, secretkey = None):
+  opts = {
+    "url" : os.environ[prefix + "URL"], 
+    "accesskey" : os.environ[prefix + "ACCESS_KEY"],
+    "secretkey" : os.environ[prefix + "SECRET_KEY"] 
+  }
+
+  if not url is None:
+    opts["url"] = url
+
+  if not accesskey is None:
+    opts["accesskey"] = accesskey
+
+  if not secretkey is None:
+    opts["secretkey"] = secretkey
+
+  return Client(**opts)
 
 class Client:
   def __init__(self, accesskey=None, secretkey=None, url=None, cache=None, cachetime=86400, strict=False):
@@ -189,41 +227,33 @@ class Client:
   def _error(self, text):
     raise ApiError(self._unmarshall(text))
 
+  @timedurl
   def _get_raw(self, url, data=None):
-    #start = time.time()
     r = requests.get(url, auth=self._auth, params=data, headers=HEADERS)
-    #delta = time.time() - start
-    #print delta, " seconds", url
     if r.status_code < 200 or r.status_code >= 300:
       self._error(r.text)
 
     return r.text
   
+  @timedurl
   def _post(self, url, data=None):
-    #start = time.time()
     r = requests.post(url, auth=self._auth, data=self._marshall(data), headers=HEADERS)
-    #delta = time.time() - start
-    #print delta, " seconds", url
     if r.status_code < 200 or r.status_code >= 300:
       self._error(r.text)
 
     return self._unmarshall(r.text)
 
+  @timedurl
   def _put(self, url, data=None):
-    #start = time.time()
     r = requests.put(url, auth=self._auth, data=self._marshall(data), headers=HEADERS)
-    #delta = time.time() - start
-    #print delta, " seconds", url
     if r.status_code < 200 or r.status_code >= 300:
       self._error(r.text)
 
     return self._unmarshall(r.text)
 
+  @timedurl
   def _delete(self, url):
-    #start = time.time()
     r = requests.delete(url, auth=self._auth, headers=HEADERS)
-    #delta = time.time() - start
-    #print delta, " seconds", url
     if r.status_code < 200 or r.status_code >= 300:
       self._error(r.text)
 
@@ -297,7 +327,7 @@ class Client:
 
   def list(self, type, **kw):
     if not type in self.schema.types:
-      raise ClientApiError(k + " is not a valid type")
+      raise ClientApiError(type + " is not a valid type")
 
     self._validate_list(type, **kw)
     collection_url = self.schema.types[type].links.collection
