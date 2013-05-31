@@ -55,6 +55,9 @@ class RestObject:
     return k not in [ "links", "actions", "id", "type"] and not callable(v)
 
   def __str__(self):
+    return self.__repr__()
+
+  def _as_table(self):
     if not hasattr(self, "type"):
       return str(self.__dict__)
     data = [("Type", "Id", "Name", "Value")]
@@ -608,28 +611,32 @@ class Client:
 
     if command_type == LIST:
       for i in self.list(type_name, **new_args):
-        print i
+        _print_cli(i)
 
     if command_type == CREATE:
-      print self.create(type_name, **new_args)
+      _print_cli(self.create(type_name, **new_args))
 
     if command_type == DELETE:
       obj = self.by_id(type_name, new_args["id"])
       if obj:
         self.delete(obj)
-        print obj
+        _print_cli(obj)
 
     if command_type == UPDATE:
-      print self.update_by_id(type_name, new_args["id"], new_args)
+      _print_cli(self.update_by_id(type_name, new_args["id"], new_args))
 
 
     if command_type == ACTION:
       obj = self.by_id(type_name, new_args["id"])
       if obj:
-        print self.action(obj, action_name, new_args)
+        _print_cli(self.action(obj, action_name, new_args))
 
 
-
+def _print_cli(obj):
+  if callable(getattr(obj, "_as_table")):
+    print obj._as_table()
+  else:
+    print obj
 
 ## {{{ http://code.activestate.com/recipes/267662/ (r7)
 import cStringIO,operator
