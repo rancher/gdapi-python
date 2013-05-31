@@ -292,7 +292,13 @@ class Client:
       url = url + id
     else:
       url = "/".join([url, id])
-    return self._get(url)
+    try:
+      return self._get(url)
+    except ApiError, e:
+      if e.error.code == "RESOURCE_NOT_FOUND":
+        return None
+      else:
+        raise e
 
   def update_by_id(self, type, id, *args, **kw):
     url = self.schema.types[type].links.collection
