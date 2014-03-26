@@ -1,845 +1,778 @@
 #!/usr/bin/env python
+# PYTHON_ARGCOMPLETE_OK
 
+import re
 import requests
 import collections
 import hashlib
 import os
 import json
 import time
-
-CACHE_DIR = "~/.gdapi"
-
-TIME = False
 try:
-  os.environ["TIME_API"]
-  TIME = True
-except:
-  pass
+    import argcomplete
+except ImportError:
+    pass
 
 
-LIST = "list-"
-CREATE = "create-"
-UPDATE = "update-"
-DELETE = "delete-"
-ACTION = "action-"
-COMMAND_TYPES = [ LIST, CREATE, UPDATE, DELETE, ACTION ]
+def _prefix(cmd):
+    prefix = os.path.basename(cmd.replace('-', '_'))
+    for i in ['.pyc', '.py', '-cli', '-tool', '-util']:
+        prefix = prefix.replace(i, '')
+    return prefix.upper()
 
-GET_METHOD = "GET"
-POST_METHOD = "POST"
-PUT_METHOD = "PUT"
-DELETE_METHOD = "DELETE"
+PREFIX = _prefix(__file__)
+CACHE_DIR = '~/.' + PREFIX.lower()
+TIME = not os.environ.get('TIME_API') is None
 
-HEADERS = { "Accept" : "application/json" }
+LIST = 'list-'
+CREATE = 'create-'
+UPDATE = 'update-'
+DELETE = 'delete-'
+ACTION = 'action-'
+TRIM = True
+
+GET_METHOD = 'GET'
+POST_METHOD = 'POST'
+PUT_METHOD = 'PUT'
+DELETE_METHOD = 'DELETE'
+
+HEADERS = {'Accept': 'application/json'}
+
+LIST_METHODS = {'__iter__': True, '__len__': True, '__getitem__': True}
+
 
 def echo(fn):
-  def wrapped(*args, **kw):
-    ret = fn(*args, **kw)
-    print fn.__name__, repr(ret)
-    return ret
-  return wrapped
-  
-def timedurl(fn):
-  def wrapped(*args, **kw):
-    if TIME:
-      start = time.time()
-      ret = fn(*args, **kw)
-      delta = time.time() - start
-      print delta, args[1], fn.__name__
-      return ret
-    else:
-      return fn(*args, **kw)
-  return wrapped
+    def wrapped(*args, **kw):
+        ret = fn(*args, **kw)
+        print fn.__name__, repr(ret)
+        return ret
+    return wrapped
+
+
+def timed_url(fn):
+    def wrapped(*args, **kw):
+        if TIME:
+            start = time.time()
+            ret = fn(*args, **kw)
+            delta = time.time() - start
+            print delta, args[1], fn.__name__
+            return ret
+        else:
+            return fn(*args, **kw)
+    return wrapped
+
 
 class RestObject:
-  def _is_public(self, k, v):
-    return k not in [ "links", "actions", "id", "type"] and not callable(v)
-
-  def __str__(self):
-    return self.__repr__()
-
-  def _as_table(self):
-    if not hasattr(self, "type"):
-      return str(self.__dict__)
-    data = [("Type", "Id", "Name", "Value")]
-    for k, v in self.iteritems():
-      if self._is_public(k, v):
-        if v is None:
-          v = "null"
-        if v is True:
-          v = "true"
-        if v is False:
-          v = "false"
-        data.append((self.type, self.id, str(k), str(v)))
-
-    return indent(data, hasHeader=True, prefix='| ', postfix=' |')
-
-  def __repr__(self):
-    data = {}
-    for k, v in self.__dict__.iteritems():
-      if self._is_public(k, v):
-        data[k] = v
-    return repr(data)
-
-  def __iter__(self):
-    return iter(self.__dict__)
-
-  def __getitem__(self, i):
-    return getattr(self, i)
-
-  def __setitem__(self, i, v):
-    return setattr(self, i, v)
-
-  def iteritems(self):
-    return self.__dict__.iteritems()
-
-
-class Schema:
-  def __init__(self, text, obj):
-    self.text = text
-    self.types = {}
-    for t in obj:
-      self.types[t.id] = t
-      for old_name in [ "methods", "actions", "fields" ]:
-        if hasattr(t, old_name):
-          t.__dict__["resource" + old_name.capitalize()] = t.__dict__[old_name]
-
-      t.creatable = False
-      try:
-        if POST_METHOD in t.collectionMethods:
-          t.creatable = True
-      except:
+    def __init__(self):
         pass
 
-      t.updatable = False
-      try:
-        if PUT_METHOD in t.resourceMethods:
-          t.updatable = True
-      except:
-        pass
+    @staticmethod
+    def _is_public(k, v):
+        return k not in ['links', 'actions', 'id', 'type'] and not callable(v)
 
-      t.deletable = False
-      try:
-        if DELETE_METHOD in t.resourceMethods:
-          t.deletable = True
-      except:
-        pass
+    def __str__(self):
+        return self.__repr__()
 
-      t.listable = False
-      try:
-        if GET_METHOD in t.collectionMethods:
-          t.listable = True
-      except:
-        pass
+    def _as_table(self):
+        if not hasattr(self, 'type'):
+            return str(self.__dict__)
+        data = [('Type', 'Id', 'Name', 'Value')]
+        for k, v in self.iteritems():
+            if self._is_public(k, v):
+                if v is None:
+                    v = 'null'
+                if v is True:
+                    v = 'true'
+                if v is False:
+                    v = 'false'
+                v = str(v)
+                if TRIM and len(v) > 70:
+                    v = v[0:70] + '...'
+                data.append((self.type, self.id, str(k), v))
 
-      if not hasattr(t, "collectionFilters"):
-        t.collectionFilters = {}
-       
+        return indent(data, hasHeader=True, prefix='| ', postfix=' |',
+                      wrapfunc=lambda x: str(x))
 
-  def __str__(self):
-    return str(self.text)
+    def _is_list(self):
+        return 'data' in self.__dict__ and isinstance(self.data, list)
 
-  def __repr(self):
-    return repr(self.text)
+    def __repr__(self):
+        data = {}
+        for k, v in self.__dict__.iteritems():
+            if self._is_public(k, v):
+                data[k] = v
+        return repr(data)
+
+    def __getattr__(self, k):
+        if self._is_list() and k in LIST_METHODS:
+            return getattr(self.data, k)
+        return getattr(self.__dict__, k)
+
+    def __iter__(self):
+        if self._is_list():
+            return iter(self.data)
+
+
+class Schema(object):
+    def __init__(self, text, obj):
+        self.text = text
+        self.types = {}
+        for t in obj:
+            self.types[t.id] = t
+            t.creatable = False
+            try:
+                if POST_METHOD in t.collectionMethods:
+                    t.creatable = True
+            except:
+                pass
+
+            t.updatable = False
+            try:
+                if PUT_METHOD in t.resourceMethods:
+                    t.updatable = True
+            except:
+                pass
+
+            t.deletable = False
+            try:
+                if DELETE_METHOD in t.resourceMethods:
+                    t.deletable = True
+            except:
+                pass
+
+            t.listable = False
+            try:
+                if GET_METHOD in t.collectionMethods:
+                    t.listable = True
+            except:
+                pass
+
+            if not hasattr(t, 'collectionFilters'):
+                t.collectionFilters = {}
+
+    def __str__(self):
+        return str(self.text)
+
+    def __repr(self):
+        return repr(self.text)
 
 
 class ApiError(Exception):
-  def __init__(self, obj):
-    self.error = obj
-    try:
-      super(ApiError, self).__init__(self, obj.message)
-    except:
-      super(ApiError, self).__init__(self, "API Error")
+    def __init__(self, obj):
+        self.error = obj
+        try:
+            msg = '{} : {}\n{}'.format(obj.code, obj.message, obj)
+            super(ApiError, self).__init__(self, msg)
+        except:
+            super(ApiError, self).__init__(self, 'API Error')
 
 
 class ClientApiError(Exception):
-  pass
+    pass
 
-def from_env(prefix = "GDAPI_", url = None, accesskey = None, secretkey = None):
-  opts = {
-    "url" : os.environ[prefix + "URL"], 
-    "accesskey" : os.environ[prefix + "ACCESS_KEY"],
-    "secretkey" : os.environ[prefix + "SECRET_KEY"] 
-  }
 
-  if not url is None:
-    opts["url"] = url
+class Client(object):
+    def __init__(self, access_key=None, secret_key=None, url=None, cache=False,
+                 cache_time=86400, strict=False, **kw):
+        self._access_key = access_key
+        self._secret_key = secret_key
+        self._auth = (self._access_key, self._secret_key)
+        self._url = url
+        self._cache = cache
+        self._cache_time = cache_time
+        self._strict = strict
+        self.schema = None
+        self._session = requests.Session()
 
-  if not accesskey is None:
-    opts["accesskey"] = accesskey
+        if not self._cache_time:
+            self._cache_time = 60 * 60 * 24  # 24 Hours
 
-  if not secretkey is None:
-    opts["secretkey"] = secretkey
+        if self.valid():
+            self._load_schemas()
 
-  return Client(**opts)
+    def valid(self):
+        return self._url is not None
 
-class Client:
-  def __init__(self, accesskey=None, secretkey=None, url=None, cache=None, cachetime=86400, strict=False):
-    self._accesskey = accesskey
-    self._secretkey = secretkey
-    self._auth = ( self._accesskey, self._secretkey )
-    self._url = url
-    self._cache = cache
-    self._cachetime = cachetime
-    self._strict = strict
-    self.schema = None
+    def object_hook(self, obj):
+        if isinstance(obj, list):
+            return [self.object_hook(x) for x in obj]
 
-    if not self._cachetime:
-      self._cachetime = 60 * 60 * 24 # 24 Hours
+        if isinstance(obj, dict):
+            result = RestObject()
 
-    if self.valid():
-      self._load_schemas()
+            for k, v in obj.iteritems():
+                setattr(result, k, self.object_hook(v))
 
-  def valid(self):
-    return self._accesskey != None and self._secretkey != None and self._url != None
+            for link in ['next', 'prev']:
+                try:
+                    url = getattr(result.pagination, link)
+                    if url is not None:
+                        setattr(result, link, lambda url=url: self._get(url))
+                except AttributeError:
+                    pass
 
-  def object_hook(self, obj):
-    if isinstance(obj, list):
-      return [ self.object_hook(x) for x in obj ]
+            if hasattr(result, 'type') and isinstance(getattr(result, 'type'),
+                                                      basestring):
+                if hasattr(result, 'links'):
+                    for link_name, link in result.links.iteritems():
+                        if not hasattr(result, link_name):
+                            cb = lambda _link=link, **kw: self._get(_link,
+                                                                    data=kw)
+                            setattr(result, link_name, cb)
 
-    if isinstance(obj, dict):
-      result = RestObject()
+                if hasattr(result, 'actions'):
+                    for link_name, link in result.actions.iteritems():
+                        if not hasattr(result, link_name):
+                            cb = lambda _link_name=link_name, _result=result, \
+                                *args, **kw: self.action(_result, _link_name,
+                                                         *args, **kw)
+                            setattr(result, link_name, cb)
 
-      for k, v in obj.iteritems():
-        setattr(result, k, self.object_hook(v))
+            return result
 
-      if hasattr(result, "data") and hasattr(result, "type") and result.type == "collection":
-        return result.data
+        return obj
 
-      if hasattr(result, "links"):
-        for link_name, link in result.links.iteritems():
-          cb = lambda link=link: lambda **kw: self._get(link,data=kw)
-          setattr(result, link_name, cb())
+    def object_pairs_hook(self, pairs):
+        ret = collections.OrderedDict()
+        for k, v in pairs:
+            ret[k] = v
+        return self.object_hook(ret)
 
-      if hasattr(result, "actions"):
-        for link_name, link in result.actions.iteritems():
-          cb = lambda link_name=link_name, result=result: lambda *args, **kw: self.action(result, link_name, *args, **kw)
-          setattr(result, link_name, cb())
-      return result
+    def _get(self, url, data=None):
+        return self._unmarshall(self._get_raw(url, data=data))
 
-    return obj
+    def _error(self, text):
+        raise ApiError(self._unmarshall(text))
 
-  def object_pairs_hook(self,pairs):
-    ret = collections.OrderedDict()
-    for k, v in pairs:
-      ret[k] = v
-    return self.object_hook(ret)
+    @timed_url
+    def _get_raw(self, url, data=None):
+        r = self._get_response(url, data)
+        return r.text
 
-  def _get(self, url, data=None):
-    return self._unmarshall(self._get_raw(url, data=data))
+    def _get_response(self, url, data=None):
+        r = self._session.get(url, auth=self._auth, params=data,
+                              headers=HEADERS)
+        if r.status_code < 200 or r.status_code >= 300:
+            self._error(r.text)
 
-  def _error(self, text):
-    raise ApiError(self._unmarshall(text))
+        return r
 
-  @timedurl
-  def _get_raw(self, url, data=None):
-    r = requests.get(url, auth=self._auth, params=data, headers=HEADERS)
-    if r.status_code < 200 or r.status_code >= 300:
-      self._error(r.text)
+    @timed_url
+    def _post(self, url, data=None):
+        r = self._session.post(url, auth=self._auth, data=self._marshall(data),
+                               headers=HEADERS)
+        if r.status_code < 200 or r.status_code >= 300:
+            self._error(r.text)
 
-    return r.text
-  
-  @timedurl
-  def _post(self, url, data=None):
-    r = requests.post(url, auth=self._auth, data=self._marshall(data), headers=HEADERS)
-    if r.status_code < 200 or r.status_code >= 300:
-      self._error(r.text)
+        return self._unmarshall(r.text)
 
-    return self._unmarshall(r.text)
+    @timed_url
+    def _put(self, url, data=None):
+        r = self._session.put(url, auth=self._auth, data=self._marshall(data),
+                              headers=HEADERS)
+        if r.status_code < 200 or r.status_code >= 300:
+            self._error(r.text)
 
-  @timedurl
-  def _put(self, url, data=None):
-    r = requests.put(url, auth=self._auth, data=self._marshall(data), headers=HEADERS)
-    if r.status_code < 200 or r.status_code >= 300:
-      self._error(r.text)
+        return self._unmarshall(r.text)
 
-    return self._unmarshall(r.text)
+    @timed_url
+    def _delete(self, url):
+        r = self._session.delete(url, auth=self._auth, headers=HEADERS)
+        if r.status_code < 200 or r.status_code >= 300:
+            self._error(r.text)
 
-  @timedurl
-  def _delete(self, url):
-    r = requests.delete(url, auth=self._auth, headers=HEADERS)
-    if r.status_code < 200 or r.status_code >= 300:
-      self._error(r.text)
+        return self._unmarshall(r.text)
 
-    return self._unmarshall(r.text)
+    def _unmarshall(self, text):
+        return json.loads(text, object_hook=self.object_hook)
 
-  def _unmarshall(self, text):
-    #print "Output:", text
-    return json.loads(text, object_pairs_hook=self.object_pairs_hook)
+    def _marshall(self, obj):
+        if obj is None:
+            return None
+        return json.dumps(self._to_dict(obj))
 
-  def _marshall(self, obj):
-    if obj is None:
-      return None
-    return json.dumps(self._to_dict(obj))
-
-  def _load_schemas(self):
-    if self.schema:
-      return
-
-    schematext = self._get_cached_schema()
-
-    if not schematext:
-      schematext = self._get_raw(self._url)
-      self._cache_schema(schematext)
-
-    schema = Schema(schematext, self._unmarshall(schematext))
-
-    self._bind_methods(schema)
-    self.schema = schema
-
-  def by_id(self, type, id):
-    url = self.schema.types[type].links.collection
-    if url.endswith("/"):
-      url = url + id
-    else:
-      url = "/".join([url, id])
-    try:
-      return self._get(url)
-    except ApiError, e:
-      if e.error.code == "RESOURCE_NOT_FOUND":
-        return None
-      else:
-        raise e
-
-  def update_by_id(self, type, id, *args, **kw):
-    url = self.schema.types[type].links.collection
-    if url.endswith("/"):
-      url = url + id
-    else:
-      url = "/".join([url, id])
-
-    return self._put(url, data=self._to_dict(*args, **kw))
-
-  def update(self, obj, *args, **kw):
-    url = obj.links.self
-
-    for k, v in self._to_dict(*args, **kw).iteritems():
-      setattr(obj, k, v)
-
-    return self._put(url, data=obj)
-
-  def _validate_list(self, type, **kw):
-    if not self._strict:
-      return
-
-    collectionFilters = self.schema.types[type].collectionFilters
-
-    for k in kw:
-      if hasattr(collectionFilters, k):
-        return
-
-      for filter_name, filter_value in collectionFilters.iteritems():
-        for m in filter_value.modifiers:
-          if k == "_".join([filter_name, m]):
+    def _load_schemas(self, force=False):
+        if self.schema and not force:
             return
 
-      raise ClientApiError(k + " is not searchable field")
+        schema_text = self._get_cached_schema()
 
-  def list(self, type, **kw):
-    if not type in self.schema.types:
-      raise ClientApiError(type + " is not a valid type")
+        if force or not schema_text:
+            response = self._get_response(self._url)
+            schema_url = response.headers.get('X-API-Schemas')
+            if schema_url is not None and self._url != schema_url:
+                schema_text = self._get_raw(schema_url)
+            else:
+                schema_text = response.text
+            self._cache_schema(schema_text)
 
-    self._validate_list(type, **kw)
-    collection_url = self.schema.types[type].links.collection
-    return self._get(collection_url, data=kw)
+        obj = self._unmarshall(schema_text)
+        schema = Schema(schema_text, obj)
 
-  def reload(self, obj):
-    return self.by_id(obj.type, obj.id)
+        self._bind_methods(schema)
+        self.schema = schema
 
-  def create(self, type, *args, **kw):
-    collection_url = self.schema.types[type].links.collection
-    return self._post(collection_url, data=self._to_dict(*args,**kw))
+    def reload_schema(self):
+        self._load_schemas(force=True)
 
-  def delete(self, *args):
-    for i in args:
-      if isinstance(i, RestObject):
-        self._delete(i.links.self)
+    def by_id(self, type, id, **kw):
+        url = self.schema.types[type].links.collection
+        if url.endswith('/'):
+            url = url + id
+        else:
+            url = '/'.join([url, id])
+        try:
+            return self._get(url, kw)
+        except ApiError, e:
+            if e.error.code == 'RESOURCE_NOT_FOUND':
+                return None
+            else:
+                raise e
 
-  def action(self, obj, action_name, *args, **kw):
-    url = obj.actions[action_name]
-    return self._post(url, data=self._to_dict(*args,**kw))
+    def update_by_id(self, type, id, *args, **kw):
+        url = self.schema.types[type].links.collection
+        if url.endswith('/'):
+            url = url + id
+        else:
+            url = '/'.join([url, id])
 
-  def _to_dict(self, *args, **kw):
-    ret = {}
+        return self._put(url, data=self._to_dict(*args, **kw))
 
-    for i in args:
-      if isinstance(i, dict):
-        for k, v in i.iteritems():
-          ret[k] = v
+    def update(self, obj, *args, **kw):
+        url = obj.links.self
 
-      if isinstance(i, RestObject):
-        for k,v  in i.__dict__.iteritems():
-          if not k.startswith("_") and not isinstance(v, RestObject) and not callable(v):
+        for k, v in self._to_dict(*args, **kw).iteritems():
+            setattr(obj, k, v)
+
+        return self._put(url, data=obj)
+
+    def _validate_list(self, type, **kw):
+        if not self._strict:
+            return
+
+        collection_filters = self.schema.types[type].collectionFilters
+
+        for k in kw:
+            if hasattr(collection_filters, k):
+                return
+
+            for filter_name, filter_value in collection_filters.iteritems():
+                for m in filter_value.modifiers:
+                    if k == '_'.join([filter_name, m]):
+                        return
+
+            raise ClientApiError(k + ' is not searchable field')
+
+    def list(self, type, **kw):
+        if not type in self.schema.types:
+            raise ClientApiError(type + ' is not a valid type')
+
+        self._validate_list(type, **kw)
+        collection_url = self.schema.types[type].links.collection
+        return self._get(collection_url, data=kw)
+
+    def reload(self, obj):
+        return self.by_id(obj.type, obj.id)
+
+    def create(self, type, *args, **kw):
+        collection_url = self.schema.types[type].links.collection
+        return self._post(collection_url, data=self._to_dict(*args, **kw))
+
+    def delete(self, *args):
+        for i in args:
+            if isinstance(i, RestObject):
+                return self._delete(i.links.self)
+
+    def action(self, obj, action_name, *args, **kw):
+        url = obj.actions[action_name]
+        return self._post(url, data=self._to_dict(*args, **kw))
+
+    def _to_dict(self, *args, **kw):
+        ret = {}
+
+        for i in args:
+            if isinstance(i, dict):
+                for k, v in i.iteritems():
+                    ret[k] = v
+
+            if isinstance(i, RestObject):
+                for k, v in vars(i).iteritems():
+                    if not k.startswith('_') and \
+                            not isinstance(v, RestObject) and not callable(v):
+                        ret[k] = v
+
+        for k, v in kw.iteritems():
             ret[k] = v
 
-    for k, v in kw.iteritems():
-      ret[k] = v
+        return ret
 
-    return ret
-  
-  def _bind_methods(self, schema):
-    bindings = [ 
-        ("list", "collectionMethods", GET_METHOD, self.list),
-        ("by_id", "collectionMethods", GET_METHOD, self.by_id),
-        ("update_by_id", "resourceMethods", PUT_METHOD, self.update_by_id),
-        ("create", "collectionMethods", POST_METHOD, self.create)
-      ]
+    @staticmethod
+    def _type_name_variants(name):
+        ret = [name]
+        python_name = re.sub(r'([a-z])([A-Z])', r'\1_\2', name)
+        if python_name != name:
+            ret.append(python_name.lower())
 
-    for type_name, type in schema.types.iteritems():
-      for method_name, type_collection, test_method, m in bindings:
-        # double lambda for lexical binding hack
-        cb = lambda type_name=type_name, method=m: lambda *args,**kw: method(type_name, *args, **kw)
-        if hasattr(type, type_collection) and test_method in type[type_collection]:
-          setattr(self, "_".join([method_name, type_name]), cb())
+        return ret
 
-  def _get_schema_hash(self):
-    h = hashlib.new("sha1")
-    h.update(self._url)
-    h.update(self._accesskey)
-    return h.hexdigest()
+    def _bind_methods(self, schema):
+        bindings = [
+            ('list', 'collectionMethods', GET_METHOD, self.list),
+            ('by_id', 'collectionMethods', GET_METHOD, self.by_id),
+            ('update_by_id', 'resourceMethods', PUT_METHOD, self.update_by_id),
+            ('create', 'collectionMethods', POST_METHOD, self.create)
+        ]
 
-  def _get_cached_schema_file_name(self):
-    if not self._cache:
-      return None
+        for type_name, type in schema.types.iteritems():
+            for name_variant in self._type_name_variants(type_name):
+                for method_name, type_collection, test_method, m in bindings:
+                    # double lambda for lexical binding hack, I'm sure there's
+                    # a better way to do this
+                    cb = lambda type_name=type_name, method=m: \
+                        lambda *args, **kw: method(type_name, *args, **kw)
+                    if hasattr(type, type_collection) and \
+                            test_method in type[type_collection]:
+                        setattr(self, '_'.join([method_name, name_variant]),
+                                cb())
 
-    h = self._get_schema_hash()
+    def _get_schema_hash(self):
+        h = hashlib.new('sha1')
+        h.update(self._url)
+        if self._access_key is not None:
+            h.update(self._access_key)
+        return h.hexdigest()
 
-    cachedir = os.path.expanduser(CACHE_DIR)
-    if not cachedir:
-      return None
+    def _get_cached_schema_file_name(self):
+        if not self._cache:
+            return None
 
-    if not os.path.exists(cachedir):
-      os.mkdir(cachedir)
+        h = self._get_schema_hash()
 
-    return os.path.join(cachedir, "schema-" + h + ".json")
+        cachedir = os.path.expanduser(CACHE_DIR)
+        if not cachedir:
+            return None
 
-  def _cache_schema(self, text):
-    cachedschema = self._get_cached_schema_file_name()
+        if not os.path.exists(cachedir):
+            os.mkdir(cachedir)
 
-    if not cachedschema:
-      return None
+        return os.path.join(cachedir, 'schema-' + h + '.json')
 
-    with open(cachedschema, "w") as f:
-      f.write(text)
+    def _cache_schema(self, text):
+        cached_schema = self._get_cached_schema_file_name()
 
-  def _get_cached_schema(self):
-    cachedschema = self._get_cached_schema_file_name()
+        if not cached_schema:
+            return None
 
-    if not cachedschema:
-      return None
+        with open(cached_schema, 'w') as f:
+            f.write(text)
 
-    if os.path.exists(cachedschema):
-      modtime = os.path.getmtime(cachedschema)
-      if time.time() - modtime < self._cachetime:
-        with open(cachedschema) as f:
-          data = f.read()
-        return data
+    def _get_cached_schema(self):
+        if not self._cache:
+            return None
 
-    return None
+        cached_schema = self._get_cached_schema_file_name()
 
-  def _all_commands(self, lst=True, update=True, remove=True, create=True):
-    for type, schema in self.schema.types.iteritems():
-      if schema.listable:
-        yield LIST + type
-      if schema.creatable:
-        yield CREATE + type
-      if schema.updatable:
-        yield UPDATE + type
-      if schema.deletable:
-        yield DELETE + type
+        if not cached_schema:
+            return None
 
-      if hasattr(schema, "resourceActions"):
-        for k in schema.resourceActions:
-          yield ACTION + "-".join([type, k]) 
+        if os.path.exists(cached_schema):
+            mod_time = os.path.getmtime(cached_schema)
+            if time.time() - mod_time < self._cache_time:
+                with open(cached_schema) as f:
+                    data = f.read()
+                return data
 
-  def _find_match_command(self, text):
-    return _find_match(text, self._all_commands());
-
-  def _decompose_command(self, command):
-    if not command or command not in self._all_commands():
-      return (None, None, None)
-
-    command_type = filter(lambda x: command and command.startswith(x), COMMAND_TYPES)
-    if not len(command_type):
-      return (None, None, None)
-
-    command_type = command_type[0]
-    type_name = command[len(command_type):]
-    action_name = None
-
-    if command_type == ACTION:
-      idx = type_name.find("-")
-      if idx != -1:
-        action_name = type_name[idx+1:]
-        type_name = type_name[:idx]
-
-    return (command_type, type_name, action_name)
-
-  def _possible_args(self, command_type, type_name, action_name):
-    result = []
-    type_def = self.schema.types[type_name]
-    
-    if command_type == ACTION: 
-      result.append("id")
-      action_def = type_def.resourceActions[action_name]
-      if hasattr(action_def, "input"):
-        type_def = self.schema.types[action_def.input]
-
-    if command_type == LIST and type_def.listable:
-      try:
-        for name, filter in type_def.collectionFilters.iteritems():
-          result.append(name)
-          for m in filter.modifiers:
-            if m != "eq":
-              result.append(name + "_" + m)
-      except:
-        pass
-
-    try:
-      for name, field in type_def.resourceFields.iteritems():
-        if ( ( command_type == CREATE and type_def.creatable ) or command_type == ACTION ) and hasattr(field, "create") and field.create:
-          result.append(name)
-        if command_type == UPDATE and type_def.updatable and hasattr(field, "update") and field.update:
-          result.append(name)
-    except:
-      pass
-
-    if command_type == DELETE and type_def.deletable:
-      result.append("id")
-
-    if command_type == UPDATE and type_def.updatable:
-      result.append("id")
-
-    return result
-
-  def _is_list_type(self, type_name, field_name):
-    try:
-      return self.schema.types[type_name].resourceFields[field_name].type.startswith("array")
-    except:
-      return False
-
-  def _find_match_args(self, command, args, key, index):
-    command_type, type_name, action_name = self._decompose_command(command)
-    if not command_type:
-      return []
-
-    if index is None:
-      possible_args = map(lambda x: x.lower(), self._possible_args(command_type, type_name, action_name))
-
-      for arg in args.keys():
-        if arg != key and not self._is_list_type(type_name, arg) and arg in possible_args:
-          possible_args.remove(arg)
-
-      return _find_match(key, possible_args)
-    else:
-      match = _find_match(key, self._possible_args(command_type, type_name, action_name))
-      if len(match) == 1 or key in match:
-        if key in match:
-          match_val = key
-        else:
-          match_val = match[0]
-
-        val = args[key]
-        matches = None
-        if len(val):
-          val = val[-1]
-        else:
-          val = None
-
-        try:
-          if command_type == ACTION:
-            action_def = self.schema.types[type_name].resourceActions[action_name].input
-            field = self.schema.types[action_def].resourceFields[match_val]
-          else:
-            field = self.schema.types[type_name].resourceFields[match_val]
-        except:
-          # The field may not exist
-          return []
-
-        if ( field.type.startswith("reference") or field.type.startswith("array[reference") ) and hasattr(field, "referenceCollection"):
-          matches = [ x.id for x in self._get(field.referenceCollection) ]
-
-        if field.type == "enum":
-          matches = field.options
-
-        if key == "id":
-          matches = [ x.id for x in self.list(type_name) ]
-
-        if matches is None:
-          matches = []
-          for obj in self.list(type_name):
-            if hasattr(obj, key):
-              matches.append(obj[key])
-
-        if val is None:
-          return matches
-        else:
-          return _find_match(val, matches)
-
-      return []
-
-  def complete(self, index, words):
-    if index == 0:
-      return self._find_match_command(words[0])
-
-    command = words[0]
-    opts, args, key, index = _parse_args(words[1:], index - 1)
-    matches = self._find_match_args(command, args, key, index)
-    if index is None:
-      return map(lambda x: ("--" + x).lower() + "=", matches)
-    else:
-      return matches
-
-  def _run(self, cmd, args):
-    if cmd not in self._all_commands():
-      return
-
-    command_type, type_name, action_name = self._decompose_command(cmd) 
-    possible_args_map = {}
-    for i in self._possible_args(command_type, type_name, action_name):
-      possible_args_map[i.lower()] = i;
-    new_args = {}
-
-    for k, v in args.iteritems():
-      k_l = k.lower();
-      if possible_args_map.has_key(k_l):
-        k = possible_args_map[k_l]
-
-      if self._is_list_type(type_name, k):
-        new_args[k] = v
-      else:
-        if len(v) and v[0] != "null":
-          new_args[k] = v[0]
-        else:
-          new_args[k] = None
-
-    #print command_type, type_name, possible_args_map, new_args
-    #print "\n\n"
-
-    if command_type == LIST:
-      for i in self.list(type_name, **new_args):
-        _print_cli(i)
-
-    if command_type == CREATE:
-      _print_cli(self.create(type_name, **new_args))
-
-    if command_type == DELETE:
-      obj = self.by_id(type_name, new_args["id"])
-      if obj:
-        self.delete(obj)
-        _print_cli(obj)
-
-    if command_type == UPDATE:
-      _print_cli(self.update_by_id(type_name, new_args["id"], new_args))
-
-
-    if command_type == ACTION:
-      obj = self.by_id(type_name, new_args["id"])
-      if obj:
-        _print_cli(self.action(obj, action_name, new_args))
+        return None
 
 
 def _print_cli(obj):
-  if callable(getattr(obj, "_as_table")):
-    print obj._as_table()
-  else:
-    print obj
+    if obj is None:
+        return
+
+    if callable(getattr(obj, '_as_table')):
+        print obj._as_table()
+    else:
+        print obj
 
 ## {{{ http://code.activestate.com/recipes/267662/ (r7)
-import cStringIO,operator
+import cStringIO
+import operator
+
 
 def indent(rows, hasHeader=False, headerChar='-', delim=' | ', justify='left',
-           separateRows=False, prefix='', postfix='', wrapfunc=lambda x:x):
-    """Indents a table by column.
-       - rows: A sequence of sequences of items, one sequence per row.
-       - hasHeader: True if the first row consists of the columns' names.
-       - headerChar: Character to be used for the row separator line
-         (if hasHeader==True or separateRows==True).
-       - delim: The column delimiter.
-       - justify: Determines how are data justified in their column. 
-         Valid values are 'left','right' and 'center'.
-       - separateRows: True if rows are to be separated by a line
-         of 'headerChar's.
-       - prefix: A string prepended to each printed row.
-       - postfix: A string appended to each printed row.
-       - wrapfunc: A function f(text) for wrapping text; each element in
-         the table is first wrapped by this function."""
-    # closure for breaking logical rows to physical, using wrapfunc
-    def rowWrapper(row):
-        newRows = [wrapfunc(item).split('\n') for item in row]
-        return [[substr or '' for substr in item] for item in map(None,*newRows)]
-    # break each logical row into one or more physical ones
-    logicalRows = [rowWrapper(row) for row in rows]
-    # columns of physical rows
-    columns = map(None,*reduce(operator.add,logicalRows))
-    # get the maximum of each column by the string length of its items
-    maxWidths = [max([len(str(item)) for item in column]) for column in columns]
-    rowSeparator = headerChar * (len(prefix) + len(postfix) + sum(maxWidths) + \
-                                 len(delim)*(len(maxWidths)-1))
-    # select the appropriate justify method
-    justify = {'center':str.center, 'right':str.rjust, 'left':str.ljust}[justify.lower()]
-    output=cStringIO.StringIO()
-    if separateRows: print >> output, rowSeparator
-    for physicalRows in logicalRows:
-        for row in physicalRows:
-            print >> output, \
-                prefix \
-                + delim.join([justify(str(item),width) for (item,width) in zip(row,maxWidths)]) \
-                + postfix
-        if separateRows or hasHeader: print >> output, rowSeparator; hasHeader=False
-    return output.getvalue()
+           separateRows=False, prefix='', postfix='', wrapfunc=lambda x: x):
+        '''Indents a table by column.
+             - rows: A sequence of sequences of items, one sequence per row.
+             - hasHeader: True if the first row consists of the columns' names.
+             - headerChar: Character to be used for the row separator line
+                 (if hasHeader==True or separateRows==True).
+             - delim: The column delimiter.
+             - justify: Determines how are data justified in their column.
+                 Valid values are 'left','right' and 'center'.
+             - separateRows: True if rows are to be separated by a line
+                 of 'headerChar's.
+             - prefix: A string prepended to each printed row.
+             - postfix: A string appended to each printed row.
+             - wrapfunc: A function f(text) for wrapping text; each element in
+                 the table is first wrapped by this function.'''
+        # closure for breaking logical rows to physical, using wrapfunc
+        def rowWrapper(row):
+                newRows = [wrapfunc(item).split('\n') for item in row]
+                return [[substr or '' for substr in item] for item in map(None, *newRows)]  # NOQA
+        # break each logical row into one or more physical ones
+        logicalRows = [rowWrapper(row) for row in rows]
+        # columns of physical rows
+        columns = map(None, *reduce(operator.add, logicalRows))
+        # get the maximum of each column by the string length of its items
+        maxWidths = [max([len(str(item)) for item in column])
+                     for column in columns]
+        rowSeparator = headerChar * (len(prefix) + len(postfix) +
+                                     sum(maxWidths) +
+                                     len(delim)*(len(maxWidths)-1))
+        # select the appropriate justify method
+        justify = {'center': str.center, 'right': str.rjust, 'left': str.ljust}[justify.lower()]  # NOQA
+        output = cStringIO.StringIO()
+        if separateRows:
+            print >> output, rowSeparator
+        for physicalRows in logicalRows:
+            for row in physicalRows:
+                print >> output, prefix \
+                    + delim.join([justify(str(item), width) for (item, width) in zip(row, maxWidths)]) + postfix  # NOQA
+            if separateRows or hasHeader:
+                print >> output, rowSeparator
+                hasHeader = False
+        return output.getvalue()
 #End ## {{{ http://code.activestate.com/recipes/267662/ (r7)
-    
-def _find_match(text, strings):
-  result = [];
-  if not text or len(text.strip()) == 0:
-    return strings
-
-  for test in strings:
-    if test.lower().startswith(text.lower()):
-      result.append(test)
-
-  return result
 
 
-def _parse_args(words, index):
-  found_break = False
-  opts = {}
-  args = {}
-  cmap = opts
-  key = None
-  cindex = 0
-  result_index = None
-  result_key = None
-  for word in words:
-    if word == "--" and cindex != index:
-      found_break = True
-      cmap = args
-    if word.startswith("--"):
-      key = word[2:]
-      val = None
-      idx = key.find("=")
-      if idx != -1:
-        val = key[idx+1:]
-        key = key[:idx]
-      key = key.lower()
-      if cindex == index:
-        result_key = key
-      if not key in cmap:
-        cmap[key] = []
-      if val != None and len(val) > 0:
-        cmap[key].append(val)
-        result_index = len(cmap[key]) - 1
-    elif key:
-      if cindex == index:
-        result_key = key
-        result_index = len(cmap[key]) - 1
-        if result_index < 0:
-          result_index = 0
-      if word != "=":
-        cmap[key].append(word)
-        key = None
-
-    cindex = cindex + 1
-
-  if not found_break:
-    args = opts
-
-  return (opts, args, result_key, result_index)
+def _env_prefix(cmd):
+    return _prefix(cmd) + '_'
 
 
-def _parse_client_options(cmd, words, index = None):
-  keys = [ "access-key", "secret-key", "url", "cache", "cache-time" ]
-  opts, args, key, index = _parse_args(words, index)
-  parsed_opts = {}
-  to_remove = []
-
-  env_prefix = os.path.basename(cmd.replace("-","_"))
-  for i in [ ".py", "-cli", "-tool", "-util" ]:
-    env_prefix = env_prefix.replace(i, "")
-  env_prefix = env_prefix.upper()
-
-  for long_key in keys:
-    short_key = long_key.replace("-","")
-    added = False
-    for i in [ short_key, long_key ]:
-      if opts.has_key(i) and not parsed_opts.has_key(short_key):
-        added = True
-        to_remove.append(i)
-        parsed_opts[short_key] = opts[i][0]
-
-    if not added:
-      env_suffix = long_key.replace("-","_").upper()
-      for env_key in [ env_prefix + "_" + env_suffix, "GDAPI_" + env_suffix ]:
-        if os.environ.has_key(env_key):
-          parsed_opts[short_key] = os.environ[env_key]
-          break
+def from_env(prefix=PREFIX + '_', factory=Client, **kw):
+    args = dict((x, None) for x in ['access_key', 'secret_key', 'url', 'cache',
+                                    'cache_time', 'strict'])
+    args.update(kw)
+    if not prefix.endswith('_'):
+        prefix += '_'
+    prefix = prefix.upper()
+    return _from_env(prefix=prefix, factory=factory, **args)
 
 
-  for i in to_remove:
-    del opts[i]
+def _from_env(prefix=PREFIX + '_', factory=Client, **kw):
+    result = dict(kw)
+    for k, v in kw.iteritems():
+        if not v is None:
+            result[k] = v
+        else:
+            result[k] = os.environ.get(prefix + k.upper())
 
-  if parsed_opts.has_key("cache"):
-    parsed_opts["cache"] = parsed_opts["cache"].lower() in ['true', '1', 't', 'y', 'yes']
+        if result[k] is None:
+            del result[k]
 
-  if parsed_opts.has_key("cachetime"):
-    parsed_opts["cachetime"] = int(parsed_opts["cachetime"])
+    if 'cache_time' in result:
+        result['cache_time'] = int(result['cache_time'])
 
-  return (parsed_opts, args, key, index)
-  
-
-def _run_completion(argv):
-    index = int(argv[2]) - 1
-    words = argv[4:]
-    opts = _parse_client_options(argv[3], words)[0]
-    if not opts.has_key("cache"):
-      opts["cache"] = True
-    #try:
-    client = Client(**opts)
-    if client.valid():
-      for word in client.complete(index, words):
-        print word
+    if 'cache' in result:
+        result['cache'] = result['cache'] is True or result['cache'] == 'true'
+    return factory(**result)
 
 
-def _run_client(argv):
-    cmd = argv[1]
-    opts, args, key, index = _parse_client_options(argv[0], argv[1:])
-    #print cmd, opts, args, key, index
-    client = Client(**opts)
+def _general_args(help=True):
+    import argparse
 
-    if client.valid():
-      try:
-        client._run(cmd, args)
-      except ApiError, e:
+    parser = argparse.ArgumentParser(add_help=help)
+    parser.add_argument('--access-key')
+    parser.add_argument('--secret-key')
+    parser.add_argument('--url')
+    parser.add_argument('--cache', dest='cache', action='store_true',
+                        default=True)
+    parser.add_argument('--no-cache', dest='cache', action='store_false')
+    parser.add_argument('--cache-time', type=int)
+    parser.add_argument('--strict', type=bool)
+    parser.add_argument('--trim', dest='trim', action='store_true',
+                        default=True)
+    parser.add_argument('--no-trim', dest='trim', action='store_false')
+
+    return parser
+
+
+def _list_args(subparsers, client, type, schema):
+    help_msg = LIST[0:len(LIST)-1].capitalize() + ' ' + type
+    subparser = subparsers.add_parser(LIST + type, help=help_msg)
+    for name, filter in schema.collectionFilters.iteritems():
+        subparser.add_argument('--' + name)
+        for m in filter.modifiers:
+            if m != 'eq':
+                subparser.add_argument('--' + name + '_' + m)
+
+    return subparser
+
+
+def _map_load(value):
+    value = value.strip()
+    if len(value) == 0:
+        return value
+
+    if value[0] == '{':
+        return json.loads(value)
+    else:
+        ret = {}
+        for k, v in [x.strip().split('=', 1) for x in value.split(',')]:
+            ret[k] = v
+        return ret
+
+
+def _generic_args(subparsers, field_key, type, schema,
+                  operation=None, operation_name=None, help=None):
+    if operation is None:
+        prefix = operation_name
+        help_msg = help
+    else:
+        prefix = operation + type
+        help_msg_prefix = operation[0:len(operation)-1].capitalize()
+        help_msg = help_msg_prefix + ' ' + type + ' resource'
+    subparser = subparsers.add_parser(prefix, help=help_msg)
+
+    if schema is not None:
+        for name, field in schema.iteritems():
+            if field.get(field_key) is True:
+                if field.get('type').startswith('array'):
+                    subparser.add_argument('--' + name, nargs='*')
+                elif field.get('type').startswith('map'):
+                    subparser.add_argument('--' + name, type=_map_load)
+                else:
+                    subparser.add_argument('--' + name)
+
+    return subparser
+
+
+def _full_args(client):
+    parser = _general_args()
+    subparsers = parser.add_subparsers(help='Sub-Command Help')
+    for type, schema in client.schema.types.iteritems():
+        if schema.listable:
+            subparser = _list_args(subparsers, client, type, schema)
+            subparser.set_defaults(_action=LIST, _type=type)
+        if schema.creatable:
+            subparser = _generic_args(subparsers, 'create', type,
+                                      schema.resourceFields, operation=CREATE)
+            subparser.set_defaults(_action=CREATE, _type=type)
+        if schema.updatable:
+            subparser = _generic_args(subparsers, 'update', type,
+                                      schema.resourceFields, operation=UPDATE)
+            subparser.add_argument('--id')
+            subparser.set_defaults(_action=UPDATE, _type=type)
+        if schema.deletable:
+            subparser = _generic_args(subparsers, 'delete', type,
+                                      {}, operation=DELETE)
+            subparser.add_argument('--id')
+            subparser.set_defaults(_action=DELETE, _type=type)
+
         try:
-          print e.error
-        except:
-          print "Error", e
-        sys.exit(1)
-    else:
-      print "Must specify accesskey, secretkey, and url"
+            for name, args in schema.resourceActions.iteritems():
+                action_schema = None
+                try:
+                    action_schema = client.schema.types[args.input]
+                except (KeyError, AttributeError):
+                    pass
+                help_msg = 'Action ' + name + ' on ' + type
+                subparser = _generic_args(subparsers, 'create', type,
+                                          action_schema,
+                                          operation_name=type + '-' + name,
+                                          help=help_msg)
+                subparser.add_argument('--id')
+                subparser.set_defaults(_action=ACTION + name, _type=type)
 
-  
-def _run_cli(opts = None):
-  # This doesn't really work
-  return
-  if opts is None:
-    opts = _parse_client_options("", [])[0]
+        except (KeyError, AttributeError):
+            pass
 
-  client = Client(**opts)
-  if client.valid():
-    import code
-    import rlcompleter
-    import readline
-    readline.parse_and_bind("tab: complete")
-    console = code.InteractiveConsole(locals = { "client" : client})
-    console.interact()
-  
+    if 'argcomplete' in globals():
+        argcomplete.autocomplete(parser)
+    return parser
+
+
+def _run_cli(client, namespace):
+    args, command_type, type_name = _extract(namespace, '_action', '_type')
+    args = _remove_none(args)
+
+    try:
+        if command_type == LIST:
+            if 'id' in args:
+                _print_cli(client.by_id(type_name, args['id']))
+            else:
+                for i in client.list(type_name, **args):
+                    _print_cli(i)
+
+        if command_type == CREATE:
+            _print_cli(client.create(type_name, **args))
+
+        if command_type == DELETE:
+            obj = client.by_id(type_name, args['id'])
+            if obj is None:
+                raise ClientApiError('{0} Not Found'.format(args['id']))
+            client.delete(obj)
+            _print_cli(obj)
+
+        if command_type == UPDATE:
+            _print_cli(client.update_by_id(type_name, args['id'], args))
+
+        if command_type.startswith(ACTION):
+            obj = client.by_id(type_name, args['id'])
+            if obj is None:
+                raise ClientApiError('{0} Not Found'.format(args['id']))
+            obj = client.action(obj, command_type[len(ACTION):], **args)
+            if obj:
+                _print_cli(obj)
+    except ApiError, e:
+        import sys
+
+        sys.stderr.write('Error : {}\n'.format(e.error))
+        status = int(e.error.status) - 400
+        if status > 0 and status < 255:
+            sys.exit(status)
+        else:
+            sys.exit(1)
+
+
+def _remove_none(args):
+    return dict(filter(lambda x: x[1] is not None, args.items()))
+
+
+def _extract(namespace, *args):
+    values = vars(namespace)
+    result = [values]
+    for arg in args:
+        value = values.get(arg)
+        result.append(value)
+        try:
+            del values[arg]
+        except KeyError:
+            pass
+
+    return tuple(result)
+
+
+def _cli_client(argv):
+    args, unknown = _general_args(help=False).parse_known_args()
+
+    global TRIM
+    TRIM = args.trim
+    args = vars(args)
+
+    prefix = _env_prefix(argv[0])
+    return _from_env(prefix, **args)
+
+
+def _main():
+    import sys
+    client = _cli_client(sys.argv)
+    if not client.valid():
+        _general_args().print_help()
+        sys.exit(2)
+
+    args = _full_args(client).parse_args()
+    _run_cli(client, args)
+
 if __name__ == '__main__':
-  import sys
-  if len(sys.argv) > 1:
-    if sys.argv[1] == "_complete":
-      _run_completion(sys.argv)
-    else:
-      _run_client(sys.argv)
-  else:
-    _run_cli()
+    _main()
