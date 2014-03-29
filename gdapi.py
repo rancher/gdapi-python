@@ -677,8 +677,11 @@ def _full_args(client):
                 except (KeyError, AttributeError):
                     pass
                 help_msg = 'Action ' + name + ' on ' + type
+                resource_fields = None
+                if action_schema is not None:
+                    resource_fields = action_schema.resourceFields
                 subparser = _generic_args(subparsers, 'create', type,
-                                          action_schema,
+                                          resource_fields,
                                           operation_name=type + '-' + name,
                                           help=help_msg)
                 subparser.add_argument('--id')
