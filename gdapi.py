@@ -30,6 +30,7 @@ UPDATE = 'update-'
 DELETE = 'delete-'
 ACTION = 'action-'
 TRIM = True
+JSON = False
 
 GET_METHOD = 'GET'
 POST_METHOD = 'POST'
@@ -284,12 +285,15 @@ class Client(object):
         return self._unmarshall(r.text)
 
     def _unmarshall(self, text):
-        return json.loads(text, object_hook=self.object_hook)
+        obj = json.loads(text, object_hook=self.object_hook,
+                         object_pairs_hook=self.object_pairs_hook)
+        obj._text = text
+        return obj
 
-    def _marshall(self, obj):
+    def _marshall(self, obj, indent=None, sort_keys=False):
         if obj is None:
             return None
-        return json.dumps(self._to_dict(obj))
+        return json.dumps(self._to_dict(obj), indent=indent, sort_keys=True)
 
     def _load_schemas(self, force=False):
         if self.schema and not force:
@@ -387,7 +391,23 @@ class Client(object):
         url = obj.actions[action_name]
         return self._post(url, data=self._to_dict(*args, **kw))
 
+    def _is_list(self, obj):
+        if isinstance(obj, list):
+            return True
+
+        if isinstance(obj, RestObject) and 'type' in obj.__dict__ and \
+            obj.type == 'collection':
+            return True
+
+        return False
+
     def _to_dict(self, *args, **kw):
+        if len(kw) == 0 and len(args) == 1 and self._is_list(args[0]):
+            ret = []
+            for i in args[0]:
+                ret.append(self._to_dict(i))
+            return ret
+
         ret = {}
 
         for i in args:
@@ -400,6 +420,8 @@ class Client(object):
                     if not k.startswith('_') and \
                             not isinstance(v, RestObject) and not callable(v):
                         ret[k] = v
+                    elif not k.startswith('_') and isinstance(v, RestObject):
+                        ret[k] = self._to_dict(v)
 
         for k, v in kw.iteritems():
             ret[k] = v
@@ -485,11 +507,13 @@ class Client(object):
         return None
 
 
-def _print_cli(obj):
+def _print_cli(client, obj):
     if obj is None:
         return
 
-    if callable(getattr(obj, '_as_table')):
+    if JSON:
+        print client._marshall(obj, indent=2, sort_keys=True)
+    elif callable(getattr(obj, '_as_table')):
         print obj._as_table()
     else:
         print obj
@@ -585,6 +609,7 @@ def _general_args(help=True):
     parser.add_argument('--access-key')
     parser.add_argument('--secret-key')
     parser.add_argument('--url')
+    parser.add_argument('--format', default='table', choices=['table', 'json'])
     parser.add_argument('--cache', dest='cache', action='store_true',
                         default=True)
     parser.add_argument('--no-cache', dest='cache', action='store_false')
@@ -677,8 +702,11 @@ def _full_args(client):
                 except (KeyError, AttributeError):
                     pass
                 help_msg = 'Action ' + name + ' on ' + type
+                resource_fields = None
+                if action_schema is not None:
+                    resource_fields = action_schema.resourceFields
                 subparser = _generic_args(subparsers, 'create', type,
-                                          action_schema,
+                                          resource_fields,
                                           operation_name=type + '-' + name,
                                           help=help_msg)
                 subparser.add_argument('--id')
@@ -699,23 +727,27 @@ def _run_cli(client, namespace):
     try:
         if command_type == LIST:
             if 'id' in args:
-                _print_cli(client.by_id(type_name, args['id']))
+                _print_cli(client, client.by_id(type_name, args['id']))
             else:
-                for i in client.list(type_name, **args):
-                    _print_cli(i)
+                result = client.list(type_name, **args)
+                if JSON:
+                    _print_cli(client, result)
+                else:
+                    for i in result:
+                        _print_cli(client, i)
 
         if command_type == CREATE:
-            _print_cli(client.create(type_name, **args))
+            _print_cli(client, client.create(type_name, **args))
 
         if command_type == DELETE:
             obj = client.by_id(type_name, args['id'])
             if obj is None:
                 raise ClientApiError('{0} Not Found'.format(args['id']))
             client.delete(obj)
-            _print_cli(obj)
+            _print_cli(client, obj)
 
         if command_type == UPDATE:
-            _print_cli(client.update_by_id(type_name, args['id'], args))
+            _print_cli(client, client.update_by_id(type_name, args['id'], args))
 
         if command_type.startswith(ACTION):
             obj = client.by_id(type_name, args['id'])
@@ -723,7 +755,7 @@ def _run_cli(client, namespace):
                 raise ClientApiError('{0} Not Found'.format(args['id']))
             obj = client.action(obj, command_type[len(ACTION):], **args)
             if obj:
-                _print_cli(obj)
+                _print_cli(client, obj)
     except ApiError, e:
         import sys
 
@@ -758,7 +790,13 @@ def _cli_client(argv):
 
     global TRIM
     TRIM = args.trim
+
+    global JSON
+    if args.format == 'json':
+        JSON = True
+
     args = vars(args)
+
 
     prefix = _env_prefix(argv[0])
     return _from_env(prefix, **args)
