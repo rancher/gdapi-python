@@ -606,18 +606,19 @@ def _general_args(help=True):
     import argparse
 
     parser = argparse.ArgumentParser(add_help=help)
-    parser.add_argument('--access-key')
-    parser.add_argument('--secret-key')
-    parser.add_argument('--url')
-    parser.add_argument('--format', default='table', choices=['table', 'json'])
-    parser.add_argument('--cache', dest='cache', action='store_true',
+    parser.add_argument('--access-key', dest='_access_key')
+    parser.add_argument('--secret-key', dest='_secret_key')
+    parser.add_argument('--url', dest='_url')
+    parser.add_argument('--format', dest='_format', default='table',
+                        choices=['table', 'json'])
+    parser.add_argument('--cache', dest='_cache', action='store_true',
                         default=True)
-    parser.add_argument('--no-cache', dest='cache', action='store_false')
-    parser.add_argument('--cache-time', type=int)
-    parser.add_argument('--strict', type=bool)
-    parser.add_argument('--trim', dest='trim', action='store_true',
+    parser.add_argument('--no-cache', dest='_cache', action='store_false')
+    parser.add_argument('--cache-time', dest='_cache_time', type=int)
+    parser.add_argument('--strict', dest='_strict', type=bool)
+    parser.add_argument('--trim', dest='_trim', action='store_true',
                         default=True)
-    parser.add_argument('--no-trim', dest='trim', action='store_false')
+    parser.add_argument('--no-trim', dest='_trim', action='store_false')
 
     return parser
 
@@ -785,21 +786,34 @@ def _extract(namespace, *args):
     return tuple(result)
 
 
+def _get_generic_vars(argv):
+    ret = []
+
+    for arg in argv:
+        if re.match(r'[a-zA-Z]+-[a-zA-Z]', arg):
+            break
+        ret.append(arg)
+
+    return ret
+
+
 def _cli_client(argv):
-    args, unknown = _general_args(help=False).parse_known_args()
+    generic_argv = _get_generic_vars(argv)
+    args, unknown = _general_args(help=False).parse_known_args(generic_argv)
 
     global TRIM
-    TRIM = args.trim
+    TRIM = args._trim
 
     global JSON
-    if args.format == 'json':
+    if args._format == 'json':
         JSON = True
 
-    args = vars(args)
-
+    dict_args = {}
+    for k, v in vars(args).items():
+        dict_args[k[1:]] = v
 
     prefix = _env_prefix(argv[0])
-    return _from_env(prefix, **args)
+    return _from_env(prefix, **dict_args)
 
 
 def _main():
