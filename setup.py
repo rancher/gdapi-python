@@ -6,7 +6,7 @@ with open('./requirements.txt') as r:
 
 setup(
     name='gdapi-python',
-    version='0.2.0',
+    version='0.2.1',
     py_modules=['gdapi'],
     url='https://github.com/godaddy/gdapi-python',
     license='MIT Style',
