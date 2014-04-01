@@ -368,7 +368,7 @@ class Client(object):
             raise ClientApiError(k + ' is not searchable field')
 
     def list(self, type, **kw):
-        if not type in self.schema.types:
+        if type not in self.schema.types:
             raise ClientApiError(type + ' is not a valid type')
 
         self._validate_list(type, **kw)
@@ -396,7 +396,7 @@ class Client(object):
             return True
 
         if isinstance(obj, RestObject) and 'type' in obj.__dict__ and \
-            obj.type == 'collection':
+                obj.type == 'collection':
             return True
 
         return False
@@ -518,7 +518,7 @@ def _print_cli(client, obj):
     else:
         print obj
 
-## {{{ http://code.activestate.com/recipes/267662/ (r7)
+# {{{ http://code.activestate.com/recipes/267662/ (r7)
 import cStringIO
 import operator
 
@@ -566,7 +566,7 @@ def indent(rows, hasHeader=False, headerChar='-', delim=' | ', justify='left',
                 print >> output, rowSeparator
                 hasHeader = False
         return output.getvalue()
-#End ## {{{ http://code.activestate.com/recipes/267662/ (r7)
+# End {{{ http://code.activestate.com/recipes/267662/ (r7)
 
 
 def _env_prefix(cmd):
@@ -586,7 +586,7 @@ def from_env(prefix=PREFIX + '_', factory=Client, **kw):
 def _from_env(prefix=PREFIX + '_', factory=Client, **kw):
     result = dict(kw)
     for k, v in kw.iteritems():
-        if not v is None:
+        if v is not None:
             result[k] = v
         else:
             result[k] = os.environ.get(prefix + k.upper())
@@ -748,7 +748,8 @@ def _run_cli(client, namespace):
             _print_cli(client, obj)
 
         if command_type == UPDATE:
-            _print_cli(client, client.update_by_id(type_name, args['id'], args))
+            _print_cli(client,
+                       client.update_by_id(type_name, args['id'], args))
 
         if command_type.startswith(ACTION):
             obj = client.by_id(type_name, args['id'])
