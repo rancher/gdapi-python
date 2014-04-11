@@ -287,7 +287,6 @@ class Client(object):
     def _unmarshall(self, text):
         obj = json.loads(text, object_hook=self.object_hook,
                          object_pairs_hook=self.object_pairs_hook)
-        obj._text = text
         return obj
 
     def _marshall(self, obj, indent=None, sort_keys=False):
@@ -344,11 +343,7 @@ class Client(object):
 
     def update(self, obj, *args, **kw):
         url = obj.links.self
-
-        for k, v in self._to_dict(*args, **kw).iteritems():
-            setattr(obj, k, v)
-
-        return self._put(url, data=obj)
+        return self._put(url, data=self._to_dict(*args, **kw))
 
     def _validate_list(self, type, **kw):
         if not self._strict:
@@ -401,6 +396,31 @@ class Client(object):
 
         return False
 
+    def _to_value(self, value):
+        if isinstance(value, dict):
+            ret = {}
+            for k, v in value.iteritems():
+                ret[k] = self._to_value(v)
+            return ret
+
+        if isinstance(value, list):
+            ret = []
+            for v in value:
+                ret.append(self._to_value(v))
+            return ret
+
+        if isinstance(value, RestObject):
+            ret = {}
+            for k, v in vars(value).iteritems():
+                if not k.startswith('_') and \
+                        not isinstance(v, RestObject) and not callable(v):
+                    ret[k] = self._to_value(v)
+                elif not k.startswith('_') and isinstance(v, RestObject):
+                    ret[k] = self._to_dict(v)
+            return ret
+
+        return value
+
     def _to_dict(self, *args, **kw):
         if len(kw) == 0 and len(args) == 1 and self._is_list(args[0]):
             ret = []
@@ -411,20 +431,13 @@ class Client(object):
         ret = {}
 
         for i in args:
-            if isinstance(i, dict):
-                for k, v in i.iteritems():
+            value = self._to_value(i)
+            if isinstance(value, dict):
+                for k, v in value.iteritems():
                     ret[k] = v
 
-            if isinstance(i, RestObject):
-                for k, v in vars(i).iteritems():
-                    if not k.startswith('_') and \
-                            not isinstance(v, RestObject) and not callable(v):
-                        ret[k] = v
-                    elif not k.startswith('_') and isinstance(v, RestObject):
-                        ret[k] = self._to_dict(v)
-
         for k, v in kw.iteritems():
-            ret[k] = v
+            ret[k] = self._to_value(v)
 
         return ret
 
