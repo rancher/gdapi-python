@@ -287,7 +287,6 @@ class Client(object):
     def _unmarshall(self, text):
         obj = json.loads(text, object_hook=self.object_hook,
                          object_pairs_hook=self.object_pairs_hook)
-        obj._text = text
         return obj
 
     def _marshall(self, obj, indent=None, sort_keys=False):
