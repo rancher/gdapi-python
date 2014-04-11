@@ -343,11 +343,7 @@ class Client(object):
 
     def update(self, obj, *args, **kw):
         url = obj.links.self
-
-        for k, v in self._to_dict(*args, **kw).iteritems():
-            setattr(obj, k, v)
-
-        return self._put(url, data=obj)
+        return self._put(url, data=self._to_dict(*args, **kw))
 
     def _validate_list(self, type, **kw):
         if not self._strict:
