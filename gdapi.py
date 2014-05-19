@@ -191,11 +191,10 @@ class Client(object):
         if not self._cache_time:
             self._cache_time = 60 * 60 * 24  # 24 Hours
 
-        if self.valid():
-            self._load_schemas()
+        self._load_schemas()
 
     def valid(self):
-        return self._url is not None
+        return self._url is not None and self.schema is not None
 
     def object_hook(self, obj):
         if isinstance(obj, list):
