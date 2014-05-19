@@ -312,10 +312,12 @@ class Client(object):
             self._cache_schema(schema_text)
 
         obj = self._unmarshall(schema_text)
+
         schema = Schema(schema_text, obj)
 
-        self._bind_methods(schema)
-        self.schema = schema
+        if len(schema.types) > 0:
+            self._bind_methods(schema)
+            self.schema = schema
 
     def reload_schema(self):
         self._load_schemas(force=True)
