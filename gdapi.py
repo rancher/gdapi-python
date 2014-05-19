@@ -119,6 +119,9 @@ class Schema(object):
         self.text = text
         self.types = {}
         for t in obj:
+            if t.type != 'schema':
+                continue
+
             self.types[t.id] = t
             t.creatable = False
             try:
