@@ -119,6 +119,9 @@ class Schema(object):
         self.text = text
         self.types = {}
         for t in obj:
+            if t.type != 'schema':
+                continue
+
             self.types[t.id] = t
             t.creatable = False
             try:
@@ -188,11 +191,10 @@ class Client(object):
         if not self._cache_time:
             self._cache_time = 60 * 60 * 24  # 24 Hours
 
-        if self.valid():
-            self._load_schemas()
+        self._load_schemas()
 
     def valid(self):
-        return self._url is not None
+        return self._url is not None and self.schema is not None
 
     def object_hook(self, obj):
         if isinstance(obj, list):
@@ -310,22 +312,25 @@ class Client(object):
             self._cache_schema(schema_text)
 
         obj = self._unmarshall(schema_text)
+
         schema = Schema(schema_text, obj)
 
-        self._bind_methods(schema)
-        self.schema = schema
+        if len(schema.types) > 0:
+            self._bind_methods(schema)
+            self.schema = schema
 
     def reload_schema(self):
         self._load_schemas(force=True)
 
     def by_id(self, type, id, **kw):
+        id = str(id)
         url = self.schema.types[type].links.collection
         if url.endswith('/'):
-            url = url + id
+            url += id
         else:
             url = '/'.join([url, id])
         try:
-            return self._get(url, kw)
+            return self._get(url, self._to_dict(**kw))
         except ApiError, e:
             if e.error.code == 'RESOURCE_NOT_FOUND':
                 return None
@@ -368,7 +373,7 @@ class Client(object):
 
         self._validate_list(type, **kw)
         collection_url = self.schema.types[type].links.collection
-        return self._get(collection_url, data=kw)
+        return self._get(collection_url, data=self._to_dict(**kw))
 
     def reload(self, obj):
         return self.by_id(obj.type, obj.id)
