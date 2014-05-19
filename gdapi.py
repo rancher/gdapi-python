@@ -323,13 +323,14 @@ class Client(object):
         self._load_schemas(force=True)
 
     def by_id(self, type, id, **kw):
+        id = str(id)
         url = self.schema.types[type].links.collection
         if url.endswith('/'):
-            url = url + id
+            url += id
         else:
             url = '/'.join([url, id])
         try:
-            return self._get(url, kw)
+            return self._get(url, self._to_dict(**kw))
         except ApiError, e:
             if e.error.code == 'RESOURCE_NOT_FOUND':
                 return None
@@ -372,7 +373,7 @@ class Client(object):
 
         self._validate_list(type, **kw)
         collection_url = self.schema.types[type].links.collection
-        return self._get(collection_url, data=kw)
+        return self._get(collection_url, data=self._to_dict(**kw))
 
     def reload(self, obj):
         return self.by_id(obj.type, obj.id)
