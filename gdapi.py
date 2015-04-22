@@ -288,6 +288,8 @@ class Client(object):
         return self._unmarshall(r.text)
 
     def _unmarshall(self, text):
+        if text is None or text == '':
+            return text
         obj = json.loads(text, object_hook=self.object_hook,
                          object_pairs_hook=self.object_pairs_hook)
         return obj
