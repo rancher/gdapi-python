@@ -1,6 +1,6 @@
 # gdapi-python
 
-A Python client for Go Daddy® REST APIs
+A Python client for Rancher APIs
 
 ## Installing
 
@@ -72,7 +72,3 @@ client.delete(widget)
 widget = client.by_id_widget('42')
 widget.foobars()
 ```
-
-## License
-
-MIT Style
