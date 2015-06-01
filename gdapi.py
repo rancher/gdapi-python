@@ -219,17 +219,21 @@ class Client(object):
                                                       basestring):
                 if hasattr(result, 'links'):
                     for link_name, link in result.links.iteritems():
-                        if not hasattr(result, link_name):
-                            cb = lambda _link=link, **kw: self._get(_link,
-                                                                    data=kw)
+                        cb = lambda _link=link, **kw: self._get(_link,
+                                                                data=kw)
+                        if hasattr(result, link_name):
+                            setattr(result, link_name + '_link', cb)
+                        else:
                             setattr(result, link_name, cb)
 
                 if hasattr(result, 'actions'):
                     for link_name, link in result.actions.iteritems():
-                        if not hasattr(result, link_name):
-                            cb = lambda _link_name=link_name, _result=result, \
-                                *args, **kw: self.action(_result, _link_name,
-                                                         *args, **kw)
+                        cb = lambda _link_name=link_name, _result=result, \
+                            *args, **kw: self.action(_result, _link_name,
+                                                     *args, **kw)
+                        if hasattr(result, link_name):
+                            setattr(result, link_name + '_action', cb)
+                        else:
                             setattr(result, link_name, cb)
 
             return result
