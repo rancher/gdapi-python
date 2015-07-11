@@ -72,3 +72,9 @@ client.delete(widget)
 widget = client.by_id_widget('42')
 widget.foobars()
 ```
+
+# Contact
+For bugs, questions, comments, corrections, suggestions, etc., open an issue in
+ [rancher/rancher](//github.com/rancher/rancher/issues) with a title starting with `[go-machine-service] `.
+
+Or just [click here](//github.com/rancher/rancher/issues/new?title=%5Bgo-machine-service%5D%20) to create a new issue.
