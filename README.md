@@ -75,6 +75,6 @@ widget.foobars()
 
 # Contact
 For bugs, questions, comments, corrections, suggestions, etc., open an issue in
- [rancher/rancher](//github.com/rancher/rancher/issues) with a title starting with `[go-machine-service] `.
+ [rancher/rancher](//github.com/rancher/rancher/issues) with a title starting with `[gdapi-python] `.
 
-Or just [click here](//github.com/rancher/rancher/issues/new?title=%5Bgo-machine-service%5D%20) to create a new issue.
+Or just [click here](//github.com/rancher/rancher/issues/new?title=%5Bgdapi-python%5D%20) to create a new issue.
