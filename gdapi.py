@@ -339,7 +339,7 @@ class Client(object):
         try:
             return self._get(url, self._to_dict(**kw))
         except ApiError, e:
-            if e.error.code == 'RESOURCE_NOT_FOUND':
+            if e.error.status == 404:
                 return None
             else:
                 raise e
