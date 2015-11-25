@@ -479,8 +479,7 @@ class Client(object):
                     # a better way to do this
                     cb = lambda type_name=type_name, method=m: \
                         lambda *args, **kw: method(type_name, *args, **kw)
-                    if hasattr(type, type_collection) and \
-                            test_method in typ[type_collection]:
+                    if test_method in getattr(typ, type_collection, []):
                         setattr(self, '_'.join([method_name, name_variant]),
                                 cb())
 
