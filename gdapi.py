@@ -397,7 +397,7 @@ class Client(object):
                 return self._delete(i.links.self)
 
     def action(self, obj, action_name, *args, **kw):
-        url = obj.actions[action_name]
+        url = getattr(obj.actions, action_name)
         return self._post(url, data=self._to_dict(*args, **kw))
 
     def _is_list(self, obj):
