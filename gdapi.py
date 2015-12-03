@@ -397,7 +397,7 @@ class Client(object):
                 return self._delete(i.links.self)
 
     def action(self, obj, action_name, *args, **kw):
-        url = obj.actions[action_name]
+        url = getattr(obj.actions, action_name)
         return self._post(url, data=self._to_dict(*args, **kw))
 
     def _is_list(self, obj):
@@ -479,8 +479,7 @@ class Client(object):
                     # a better way to do this
                     cb = lambda type_name=type_name, method=m: \
                         lambda *args, **kw: method(type_name, *args, **kw)
-                    if hasattr(type, type_collection) and \
-                            test_method in typ[type_collection]:
+                    if test_method in getattr(typ, type_collection, []):
                         setattr(self, '_'.join([method_name, name_variant]),
                                 cb())
 
