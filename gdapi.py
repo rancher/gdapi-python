@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # PYTHON_ARGCOMPLETE_OK
 
+from __future__ import print_function
+import six
 import re
 import requests
 import collections
@@ -45,7 +47,7 @@ LIST_METHODS = {'__iter__': True, '__len__': True, '__getitem__': True}
 def echo(fn):
     def wrapped(*args, **kw):
         ret = fn(*args, **kw)
-        print fn.__name__, repr(ret)
+        print(fn.__name__, repr(ret))
         return ret
     return wrapped
 
@@ -56,7 +58,7 @@ def timed_url(fn):
             start = time.time()
             ret = fn(*args, **kw)
             delta = time.time() - start
-            print delta, args[1], fn.__name__
+            print(delta, args[1], fn.__name__)
             return ret
         else:
             return fn(*args, **kw)
@@ -78,7 +80,7 @@ class RestObject:
         if not hasattr(self, 'type'):
             return str(self.__dict__)
         data = [('Type', 'Id', 'Name', 'Value')]
-        for k, v in self.iteritems():
+        for k, v in six.iteritems(self):
             if self._is_public(k, v):
                 if v is None:
                     v = 'null'
@@ -99,7 +101,7 @@ class RestObject:
 
     def __repr__(self):
         data = {}
-        for k, v in self.__dict__.iteritems():
+        for k, v in six.iteritems(self.__dict__):
             if self._is_public(k, v):
                 data[k] = v
         return repr(data)
@@ -204,7 +206,7 @@ class Client(object):
         if isinstance(obj, dict):
             result = RestObject()
 
-            for k, v in obj.iteritems():
+            for k, v in six.iteritems(obj):
                 setattr(result, k, self.object_hook(v))
 
             for link in ['next', 'prev']:
@@ -216,9 +218,9 @@ class Client(object):
                     pass
 
             if hasattr(result, 'type') and isinstance(getattr(result, 'type'),
-                                                      basestring):
+                                                      six.string_types):
                 if hasattr(result, 'links'):
-                    for link_name, link in result.links.iteritems():
+                    for link_name, link in six.iteritems(result.links):
                         cb = lambda _link=link, **kw: self._get(_link,
                                                                 data=kw)
                         if hasattr(result, link_name):
@@ -227,7 +229,7 @@ class Client(object):
                             setattr(result, link_name, cb)
 
                 if hasattr(result, 'actions'):
-                    for link_name, link in result.actions.iteritems():
+                    for link_name, link in six.iteritems(result.actions):
                         cb = lambda _link_name=link_name, _result=result, \
                             *args, **kw: self.action(_result, _link_name,
                                                      *args, **kw)
@@ -338,7 +340,7 @@ class Client(object):
             url = '/'.join([url, id])
         try:
             return self._get(url, self._to_dict(**kw))
-        except ApiError, e:
+        except ApiError as e:
             if e.error.status == 404:
                 return None
             else:
@@ -367,7 +369,7 @@ class Client(object):
             if hasattr(collection_filters, k):
                 return
 
-            for filter_name, filter_value in collection_filters.iteritems():
+            for filter_name, filter_value in six.iteritems(collection_filters):
                 for m in filter_value.modifiers:
                     if k == '_'.join([filter_name, m]):
                         return
@@ -395,7 +397,7 @@ class Client(object):
                 return self._delete(i.links.self)
 
     def action(self, obj, action_name, *args, **kw):
-        url = obj.actions[action_name]
+        url = getattr(obj.actions, action_name)
         return self._post(url, data=self._to_dict(*args, **kw))
 
     def _is_list(self, obj):
@@ -411,7 +413,7 @@ class Client(object):
     def _to_value(self, value):
         if isinstance(value, dict):
             ret = {}
-            for k, v in value.iteritems():
+            for k, v in six.iteritems(value):
                 ret[k] = self._to_value(v)
             return ret
 
@@ -445,10 +447,10 @@ class Client(object):
         for i in args:
             value = self._to_value(i)
             if isinstance(value, dict):
-                for k, v in value.iteritems():
+                for k, v in six.iteritems(value):
                     ret[k] = v
 
-        for k, v in kw.iteritems():
+        for k, v in six.iteritems(kw):
             ret[k] = self._to_value(v)
 
         return ret
@@ -470,15 +472,14 @@ class Client(object):
             ('create', 'collectionMethods', POST_METHOD, self.create)
         ]
 
-        for type_name, type in schema.types.iteritems():
+        for type_name, typ in six.iteritems(schema.types):
             for name_variant in self._type_name_variants(type_name):
                 for method_name, type_collection, test_method, m in bindings:
                     # double lambda for lexical binding hack, I'm sure there's
                     # a better way to do this
                     cb = lambda type_name=type_name, method=m: \
                         lambda *args, **kw: method(type_name, *args, **kw)
-                    if hasattr(type, type_collection) and \
-                            test_method in type[type_collection]:
+                    if test_method in getattr(typ, type_collection, []):
                         setattr(self, '_'.join([method_name, name_variant]),
                                 cb())
 
@@ -537,14 +538,17 @@ def _print_cli(client, obj):
         return
 
     if JSON:
-        print client._marshall(obj, indent=2, sort_keys=True)
+        print(client._marshall(obj, indent=2, sort_keys=True))
     elif callable(getattr(obj, '_as_table')):
-        print obj._as_table()
+        print(obj._as_table())
     else:
-        print obj
+        print(obj)
 
 # {{{ http://code.activestate.com/recipes/267662/ (r7)
-import cStringIO
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from io import StringIO
 import operator
 
 
@@ -580,15 +584,16 @@ def indent(rows, hasHeader=False, headerChar='-', delim=' | ', justify='left',
                                      len(delim)*(len(maxWidths)-1))
         # select the appropriate justify method
         justify = {'center': str.center, 'right': str.rjust, 'left': str.ljust}[justify.lower()]  # NOQA
-        output = cStringIO.StringIO()
+        output = StringIO()
         if separateRows:
-            print >> output, rowSeparator
+            print(rowSeparator, file=output)
         for physicalRows in logicalRows:
             for row in physicalRows:
-                print >> output, prefix \
-                    + delim.join([justify(str(item), width) for (item, width) in zip(row, maxWidths)]) + postfix  # NOQA
+                print(prefix
+                        + delim.join([justify(str(item), width) for (item, width) in zip(row, maxWidths)]) + postfix,  # NOQA
+                    file=output)
             if separateRows or hasHeader:
-                print >> output, rowSeparator
+                print(rowSeparator, file=output)
                 hasHeader = False
         return output.getvalue()
 # End {{{ http://code.activestate.com/recipes/267662/ (r7)
@@ -610,7 +615,7 @@ def from_env(prefix=PREFIX + '_', factory=Client, **kw):
 
 def _from_env(prefix=PREFIX + '_', factory=Client, **kw):
     result = dict(kw)
-    for k, v in kw.iteritems():
+    for k, v in six.iteritems(kw):
         if v is not None:
             result[k] = v
         else:
@@ -651,7 +656,7 @@ def _general_args(help=True):
 def _list_args(subparsers, client, type, schema):
     help_msg = LIST[0:len(LIST)-1].capitalize() + ' ' + type
     subparser = subparsers.add_parser(LIST + type, help=help_msg)
-    for name, filter in schema.collectionFilters.iteritems():
+    for name, filter in six.iteritems(schema.collectionFilters):
         subparser.add_argument('--' + name)
         for m in filter.modifiers:
             if m != 'eq':
@@ -686,7 +691,7 @@ def _generic_args(subparsers, field_key, type, schema,
     subparser = subparsers.add_parser(prefix, help=help_msg)
 
     if schema is not None:
-        for name, field in schema.iteritems():
+        for name, field in six.iteritems(schema):
             if field.get(field_key) is True:
                 if field.get('type').startswith('array'):
                     subparser.add_argument('--' + name, nargs='*')
@@ -701,7 +706,7 @@ def _generic_args(subparsers, field_key, type, schema,
 def _full_args(client):
     parser = _general_args()
     subparsers = parser.add_subparsers(help='Sub-Command Help')
-    for type, schema in client.schema.types.iteritems():
+    for type, schema in six.iteritems(client.schema.types):
         if schema.listable:
             subparser = _list_args(subparsers, client, type, schema)
             subparser.set_defaults(_action=LIST, _type=type)
@@ -721,7 +726,7 @@ def _full_args(client):
             subparser.set_defaults(_action=DELETE, _type=type)
 
         try:
-            for name, args in schema.resourceActions.iteritems():
+            for name, args in six.iteritems(schema.resourceActions):
                 action_schema = None
                 try:
                     action_schema = client.schema.types[args.input]
@@ -783,7 +788,7 @@ def _run_cli(client, namespace):
             obj = client.action(obj, command_type[len(ACTION):], **args)
             if obj:
                 _print_cli(client, obj)
-    except ApiError, e:
+    except ApiError as e:
         import sys
 
         sys.stderr.write('Error : {}\n'.format(e.error))
