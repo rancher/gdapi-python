@@ -353,11 +353,25 @@ class Client(object):
         else:
             url = '/'.join([url, id])
 
-        return self._put(url, data=self._to_dict(*args, **kw))
+        return self._put_and_retry(url, *args, **kw)
 
     def update(self, obj, *args, **kw):
         url = obj.links.self
-        return self._put(url, data=self._to_dict(*args, **kw))
+        return self._put_and_retry(url, *args, **kw)
+
+    def _put_and_retry(self, url, *args, **kw):
+        retries = kw.get('retries', 3)
+        last_error = None
+        for i in range(retries):
+            try:
+                return self._put(url, data=self._to_dict(*args, **kw))
+            except ApiError as e:
+                if e.error.status == 409:
+                    last_error = e
+                    time.sleep(.1)
+                else:
+                    raise e
+        raise last_error
 
     def _validate_list(self, type, **kw):
         if not self._strict:
