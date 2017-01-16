@@ -373,6 +373,20 @@ class Client(object):
                     raise e
         raise last_error
 
+    def _post_and_retry(self, url, *args, **kw):
+        retries = kw.get('retries', 3)
+        last_error = None
+        for i in range(retries):
+            try:
+                return self._post(url, data=self._to_dict(*args, **kw))
+            except ApiError as e:
+                if e.error.status == 409:
+                    last_error = e
+                    time.sleep(.1)
+                else:
+                    raise e
+        raise last_error
+
     def _validate_list(self, type, **kw):
         if not self._strict:
             return
@@ -412,7 +426,7 @@ class Client(object):
 
     def action(self, obj, action_name, *args, **kw):
         url = getattr(obj.actions, action_name)
-        return self._post(url, data=self._to_dict(*args, **kw))
+        return self._post_and_retry(url, *args, **kw)
 
     def _is_list(self, obj):
         if isinstance(obj, list):
