@@ -1,3 +1,6 @@
+# Deprecated
+For Rancher v2.x, use https://github.com/rancher/client-python
+
 # gdapi-python
 
 A Python client for Rancher APIs
